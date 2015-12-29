@@ -1,0 +1,276 @@
+/**
+ * Created by Jamie Nichols on 12/10/2015.
+ */
+define(['Class', 'Tile','Rectangle'], function (Class, Tile,Rectangle) {
+    //Define Private Variables
+    var handler;
+    var Astar = Class.extend({
+        init: function (_showfind,_handler, _size, _start, _goal) {
+            handler = _handler;
+            this.size = _size;
+            this.entity = _start;
+            this.showFind = _showfind;
+            this.width = parseInt((handler.getWorld().getWidth() * Tile.TILEWIDTH) / this.size);
+            this.height = parseInt((handler.getWorld().getHeight() * Tile.TILEHEIGHT) / this.size);
+            this.updateStart(_start.x,_start.y);
+            this.updateGoal(_goal.x,_goal.y);
+            this.closed = [];
+            this.opened = [];
+            this.grid = [];
+            this.pathfound = false;
+            this.path = [];
+            this.buildGrid();
+        },
+        //Create this.grid array
+        buildGrid: function () {
+            this.pathfound = false;
+            this.opened = [];
+            this.closed = [];
+            this.grid = [];
+            for (var i = 0; i < this.width; i++) {
+                if (!this.grid[i])this.grid[i] = [];
+                for (var j = 0; j < this.height; j++) {
+                    var current_node = {x: null, y: null, obs: false, parent: null, start: false, goal: false};
+                    current_node.obs = (this.isObs(i, j)) ? true : false;
+                    current_node.x = i;
+                    current_node.y = j;
+                    current_node.gcost = 0;
+                    current_node.fcost = 0;
+                    current_node.heur = getHeuristic(i, j, this.goal);
+                    if (current_node.x == this.start.x && current_node.y == this.start.y) {
+                        current_node.start = true;
+                        this.opened.push(current_node);
+                    }
+                    if (current_node.x == this.goal.x && current_node.y == this.goal.y) {
+                        current_node.goal = true;
+                    }
+                    this.grid[i][j] = current_node;
+
+                }
+            }
+        },
+        isObs: function (x, y) {
+            var startX = Math.max(0, parseInt((x * this.size) / Tile.TILEWIDTH));
+            var startY = Math.max(0, parseInt((y * this.size) / Tile.TILEHEIGHT));
+            var endX = Math.min(parseInt(handler.getWorld().getWidth()), parseInt(((x * this.size) + this.size) / Tile.TILEWIDTH));
+            var endY = Math.min(parseInt(handler.getWorld().getHeight()), parseInt(((y * this.size) + this.size) / Tile.TILEHEIGHT));
+
+            var entities = handler.getWorld().getEntityManager().getEntities().filter(function (ent) {
+                return ent.isStatic() == true
+            });
+            for(var e=0;e<entities.length;e++){
+                var ent = entities[e];
+                var entBox = new Rectangle(ent.x + ent.bounds.x,ent.y + ent.bounds.y,ent.bounds.width,ent.bounds.height);
+                var checkBox = new Rectangle(x *this.size,y * this.size,this.size,this.size);
+                if(entBox.intersects(checkBox))return true;
+            }
+            for (var i = startX; i <= endX; i++) {
+                for (var j = startY; j <= endY; j++) {
+                    if (handler.getWorld().getTile(i, j).isSolid()) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        },
+        findPath: function () {
+            if (this.opened.length > 0) {
+                this.opened = this.opened.sort(function (a, b) {
+                    if (a.fcost < b.fcost)return -1;
+                    else return 1;
+                });
+                var opened = this.opened;
+                var lowests = this.opened.filter(function (obj) {
+                    return obj.fcost == opened[0].fcost;
+                });
+
+                lowests = lowests.sort(function (a, b) {
+                    if (a.heur < b.heur)return -1;
+                    else return 1;
+                });
+                var current = lowests[0];
+                this.opened.splice(this.opened.indexOf(current), 1);
+                this.closed.push(current);
+                var check = [1, 1, 1,
+                             1, 1, 1,
+                             1, 1, 1 ];
+                var checkIndex = 0;
+                if (!current.goal) {
+                    for (i = current.x - 1; i <= current.x + 1; i++) {
+                        for (j = current.y - 1; j <= current.y + 1; j++) {
+                            if (check[checkIndex] == 1) {
+                                if (this.grid[i]) {
+                                    if (this.grid[i][j]) {
+                                        var neighbor = this.grid[i][j];
+                                        if (neighbor != current && neighbor.obs != true && this.closed.indexOf(neighbor) == -1) {
+                                            var gcost = getGCost(current, neighbor);
+                                            if (containsObject(neighbor, this.opened)) {
+                                                if (neighbor.fcost > gcost + neighbor.heur) {
+                                                    neighbor.parent = current;
+                                                    neighbor.gcost = gcost;
+                                                    neighbor.fcost = getFCost(neighbor);
+                                                }
+                                            }
+                                            else {
+                                                this.opened.push(neighbor);
+                                                neighbor.parent = current;
+                                                neighbor.gcost = gcost;
+                                                neighbor.fcost = getFCost(neighbor);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            checkIndex++;
+                        }
+                    }
+                    if (this.showFind) {
+                        var t = this;
+                        setTimeout(function () {
+                            t.findPath()
+                        }, 20);
+                    } else {
+                        this.findPath();
+                    }
+                } else {
+                    this.path = [];
+                    this.tracePath(current);
+                }
+            }else {
+                this.path = [];
+                this.closed.sort(function (a, b) {
+                    if (a.heur < b.heur)return -1;
+                    else return 1;
+                });
+                this.tracePath(this.closed[0]);
+
+            }
+        },
+        //Loop through parents adding them to the path array
+        tracePath: function (node) {
+            this.pathfound = true;
+            var hasParent = true;
+            var current = node;
+            while (hasParent) {
+                current.ispath = true;
+                if (current.parent) {
+                    this.path.push({x: current.x * this.size, y: current.y * this.size});
+                    current = current.parent;
+                }
+                else {
+                    hasParent = false;
+                    this.entity.setPath(this.path.reverse());
+                }
+            }
+        },
+        renderPath: function (_g) {
+            for (var i = 0; i < this.width; i++) {
+                for (var j = 0; j < this.height; j++) {
+                    if (this.grid[i][j].ispath) {
+                        _g.fillStyle = "orange";
+                        _g.fillRect(i * this.size - handler.getGameCamera().getxOffset(), j * this.size - handler.getGameCamera().getyOffset(), this.size, this.size);
+                    }
+                }
+            }
+        },
+        render: function (_g) {
+
+            if (!this.pathfound) {
+                for (var i = 0; i < this.closed.length; i++) {
+                    var node = this.closed[i];
+                    _g.fillStyle = "red";
+                    _g.fillRect(node.x * this.size - handler.getGameCamera().getxOffset(), node.y * this.size - handler.getGameCamera().getyOffset(), this.size, this.size);
+                }
+                for (var i = 0; i < this.opened.length; i++) {
+                    var node = this.opened[i];
+                    _g.fillStyle = "grey";
+                    _g.fillRect(node.x * this.size - handler.getGameCamera().getxOffset(), node.y * this.size - handler.getGameCamera().getyOffset(), this.size, this.size);
+                }
+            }
+
+            for (var i = 0; i < this.width; i++) {
+                for (var j = 0; j < this.height; j++) {
+                    _g.strokeStyle = (this.grid[i][j].obs) ? "white" : "black";
+                    if (this.grid[i][j].start) {
+                        _g.fillStyle = "blue";
+                        _g.fillRect(i * this.size - handler.getGameCamera().getxOffset(), j * this.size - handler.getGameCamera().getyOffset(), this.size, this.size);
+
+                    }
+                    if (this.grid[i][j].goal) {
+                        _g.fillStyle = "yellow";
+                        _g.fillRect(i * this.size - handler.getGameCamera().getxOffset(), j * this.size - handler.getGameCamera().getyOffset(), this.size, this.size);
+                    }
+                    _g.strokeRect(i * this.size - handler.getGameCamera().getxOffset(), j * this.size - handler.getGameCamera().getyOffset(), this.size, this.size);
+                    _g.fillStyle = "pink";
+                    _g.font = 'italic 7pt Calibri';
+                    _g.fillText(this.grid[i][j].heur, i * this.size - handler.getGameCamera().getxOffset(), (this.size / 2) + j * this.size - handler.getGameCamera().getyOffset());
+                    _g.font = 'italic 7pt Calibri';
+                    _g.fillText(this.grid[i][j].gcost, i * this.size + (this.size / 2) - handler.getGameCamera().getxOffset(), (this.size / 2) + j * this.size - handler.getGameCamera().getyOffset());
+                    _g.font = 'italic 7pt Calibri';
+                    _g.fillText(this.grid[i][j].fcost, i * this.size + (this.size / 3) - handler.getGameCamera().getxOffset(), (this.size / 1.2) + j * this.size - handler.getGameCamera().getyOffset());
+
+                    if (this.grid[i][j].ispath) {
+                        _g.fillStyle = "orange";
+                        _g.fillRect(i * this.size - handler.getGameCamera().getxOffset(), j * this.size - handler.getGameCamera().getyOffset(), this.size, this.size);
+                    }
+                }
+            }
+            _g.font = "italic 20px Calibri";
+            _g.fillStyle = "black";
+            _g.fillRect(20, 20, 120, 30);
+            _g.fillStyle = "white";
+            _g.fillText("checks:" + this.closed.length, 25, 40)
+        },
+        //Getters and Setters
+        updateStart: function (x, y) {
+            this.start = {x: parseInt(x / this.size) + 1, y: parseInt(y / this.size) + 1};
+        },
+        updateGoal: function (x, y) {
+                this.goal = {x: parseInt(x / this.size), y: parseInt(y / this.size)};
+
+        },
+        getPath: function () {
+            return this.path;
+        },
+        getSize: function () {
+            return this.size;
+        }
+    });
+
+    Astar.DEFAULT_SIZE = Tile.TILEWIDTH * 1.3;
+
+    function getHeuristic(x, y, goal) {
+        xdist = Math.abs(goal.x - x);
+        ydist = Math.abs(goal.y - y);
+        //return xdist + ydist;
+        return getDistance({x: x, y: y}, goal);
+    }
+
+    function getDistance(a, b) {
+        var distX = Math.abs(a.x - b.x);
+        var distY = Math.abs(a.y - b.y);
+        return parseInt(Math.sqrt(distX * distX + distY * distY) * 10);
+    }
+
+    function getGCost(current, neighbor) {
+        return current.gcost + getDistance(current, neighbor);
+    }
+
+    //calculate F cost
+    function getFCost(node) {
+        return node.heur + node.gcost;
+    }
+
+    function containsObject(obj, list) {
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] === obj) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    return Astar;
+})
+    
